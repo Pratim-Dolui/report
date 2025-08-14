@@ -48,7 +48,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     The report should be approximately ${wordCount} words (to fill about ${pageCount} pages). 
                     Include an introduction, main sections with relevant information, and a conclusion.
                     Format with clear section headings and organize the content well.
-                    Use appropriate language for ${educationLevel} students.`;
+                    Use appropriate language for ${educationLevel} students.
+                    Include a "References" section at the very end with at least 5 relevant academic sources.
+                    Do not use any markdown formatting (no asterisks, backticks, or other special characters).`;
     
     // Prepare the request to the Gemini API
     const requestBody = {
@@ -78,7 +80,15 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Extract the generated text from the response
     if (data.candidates && data.candidates[0]?.content?.parts) {
-      return data.candidates[0].content.parts[0].text;
+      // Clean up the response to remove any markdown formatting characters
+      let text = data.candidates[0].content.parts[0].text;
+      text = text.replace(/\*\*\*/g, '')  // Remove bold italic markers
+              .replace(/\*\*/g, '')       // Remove bold markers
+              .replace(/\*/g, '')         // Remove italic markers
+              .replace(/```[\s\S]*?```/g, '') // Remove code blocks
+              .replace(/`/g, '');         // Remove inline code markers
+      
+      return text;
     } else {
       throw new Error('Unexpected API response format');
     }
@@ -86,8 +96,16 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Display the generated report
   function displayReport(reportText) {
+    // Remove any remaining markdown formatting
+    const cleanText = reportText
+      .replace(/\*\*\*/g, '')  // Remove bold italic markers
+      .replace(/\*\*/g, '')    // Remove bold markers
+      .replace(/\*/g, '')      // Remove italic markers
+      .replace(/```[\s\S]*?```/g, '') // Remove code blocks
+      .replace(/`/g, '');      // Remove inline code markers
+      
     // Format the text with paragraph breaks
-    const formattedText = reportText
+    const formattedText = cleanText
       .replace(/\n\n/g, '</p><p>')
       .replace(/\n/g, '<br>');
     
@@ -123,6 +141,14 @@ document.addEventListener('DOMContentLoaded', function() {
   // Function to create and download PDF
   function createAndDownloadPDF(reportText, filename, jsPDFConstructor) {
     try {
+      // Clean up any remaining markdown characters
+      const cleanText = reportText
+        .replace(/\*\*\*/g, '')
+        .replace(/\*\*/g, '')
+        .replace(/\*/g, '')
+        .replace(/```[\s\S]*?```/g, '')
+        .replace(/`/g, '');
+      
       // Create new PDF document
       const doc = new jsPDFConstructor();
       
@@ -131,24 +157,50 @@ document.addEventListener('DOMContentLoaded', function() {
       const pageHeight = doc.internal.pageSize.getHeight();
       const margin = 15; // Margins in mm
       
-      // Extract headings for table of contents
-      const paragraphs = reportText.split('\n\n');
+      // Extract headings for table of contents - focus on main sections only
+      const paragraphs = cleanText.split('\n\n');
       let tableOfContents = [];
       let mainContentParagraphs = [];
+      
+      // Keywords for main sections to include in TOC
+      const mainSectionKeywords = [
+        'introduction', 'overview', 'background',
+        'feature', 'features',
+        'application', 'applications',
+        'advantage', 'advantages',
+        'disadvantage', 'disadvantages',
+        'benefit', 'benefits',
+        'methodology', 'methods',
+        'result', 'results',
+        'finding', 'findings',
+        'discussion',
+        'conclusion',
+        'summary',
+        'recommendation', 'recommendations',
+        'reference', 'references', 'bibliography'
+      ];
       
       // First pass: Identify headings and build TOC
       paragraphs.forEach(paragraph => {
         const trimmedParagraph = paragraph.trim();
         if (!trimmedParagraph) return;
         
-        // Check if paragraph is a heading
-        // Headings are typically shorter, don't end with periods, and might end with colons
-        const isHeading = trimmedParagraph.length < 50 && 
-                         !trimmedParagraph.endsWith('.') && 
-                         (!trimmedParagraph.includes('. ') || trimmedParagraph.endsWith(':'));
+        // Check if paragraph is a main heading (for TOC)
+        const lowerParagraph = trimmedParagraph.toLowerCase();
+        const isMainHeading = 
+          trimmedParagraph.length < 50 && 
+          !trimmedParagraph.endsWith('.') && 
+          !trimmedParagraph.includes('. ') &&
+          mainSectionKeywords.some(keyword => lowerParagraph.includes(keyword));
         
-        if (isHeading) {
-          // Add to table of contents with page number (to be determined later)
+        // Check if paragraph is any heading (for formatting)
+        const isHeading = isMainHeading || 
+          (trimmedParagraph.length < 50 && 
+           !trimmedParagraph.endsWith('.') && 
+           (!trimmedParagraph.includes('. ') || trimmedParagraph.endsWith(':')));
+        
+        // Add main headings to table of contents
+        if (isMainHeading) {
           tableOfContents.push({
             title: trimmedParagraph,
             page: null
@@ -157,7 +209,8 @@ document.addEventListener('DOMContentLoaded', function() {
         
         mainContentParagraphs.push({
           text: trimmedParagraph,
-          isHeading: isHeading
+          isHeading: isHeading,
+          isMainHeading: isMainHeading
         });
       });
       
@@ -166,21 +219,16 @@ document.addEventListener('DOMContentLoaded', function() {
       doc.setFontSize(16);
       doc.text("Table of Contents", margin, 20);
       
-      // We'll fill in the TOC after calculating actual page numbers
-      
       // Add content pages starting with page 2
       doc.addPage();
       let currentPage = 2;
       let y = 20;
       
-      // Track which heading is on which page
-      let headingPageMap = new Map();
-      
       // Second pass: Add content and track heading positions
       for (let i = 0; i < mainContentParagraphs.length; i++) {
         const paragraph = mainContentParagraphs[i];
         
-        if (paragraph.isHeading) {
+        if (paragraph.isMainHeading) {
           // Record which page this heading is on
           for (let j = 0; j < tableOfContents.length; j++) {
             if (tableOfContents[j].title === paragraph.text) {
@@ -188,8 +236,10 @@ document.addEventListener('DOMContentLoaded', function() {
               break;
             }
           }
-          
-          // Format heading
+        }
+        
+        // Format based on if it's a heading
+        if (paragraph.isHeading) {
           doc.setFont(undefined, 'bold');
           doc.setFontSize(13);
           y += 5; // Extra space before heading
@@ -207,8 +257,8 @@ document.addEventListener('DOMContentLoaded', function() {
           currentPage++;
           y = 20;
           
-          // If this was a heading that got pushed to a new page, update its page number
-          if (paragraph.isHeading) {
+          // If this was a main heading that got pushed to a new page, update its page number
+          if (paragraph.isMainHeading) {
             for (let j = 0; j < tableOfContents.length; j++) {
               if (tableOfContents[j].title === paragraph.text) {
                 tableOfContents[j].page = currentPage;
